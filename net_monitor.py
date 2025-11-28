@@ -60,7 +60,6 @@ def analyze_packet(packet):
         state.packet_count += 1
 
         #Layer 2: Data Link
-        #Could have included a form of spoofing detection but was time constrained.
         if packet.haslayer(ARP):
             try:
                 if packet.haslayer(Ether) and packet[Ether].dst == "ff:ff:ff:ff:ff:ff":
