@@ -21,7 +21,7 @@ import psutil
 import time
 import threading
 from collections import deque
-from scapy.all import sniff, IP, TCP, ICMP, ARP, DNS, DNSRR
+from scapy.all import sniff, IP, TCP, ICMP, ARP, DNS, DNSRR, Ether
 
 #Optional: specify a particular capture interface, or leave None for default
 INTERFACE = None
@@ -45,6 +45,8 @@ class NetworkState:
         }
         self.error_log = deque(maxlen=MAX_LOGS)
         self.packet_count = 0
+        self.broadcast_window = deque(maxlen=100)
+        self.last_broadcast_alert = 0
 
 
 state = NetworkState()
@@ -60,16 +62,26 @@ def analyze_packet(packet):
         state.packet_count += 1
 
         #Layer 2: Data Link
-        if packet.haslayer(ARP):
-            try:
-                if packet.haslayer(Ether) and packet[Ether].dst == "ff:ff:ff:ff:ff:ff":
-                    if not packet.haslayer(ARP):
+        try:
+            if packet.haslayer(Ether) and packet[Ether].dst == "ff:ff:ff:ff:ff:ff":
+                if not packet.haslayer(ARP) and not packet.haslayer(IP):
+                    #Track broadcast packet with timestamp
+                    current_time = time.time()
+                    state.broadcast_window.append(current_time)
+                    
+                    #Check if we have excessive broadcasts in the last 5 seconds
+                    #Remove packets older than 5 seconds from window for counting
+                    recent_broadcasts = [t for t in state.broadcast_window if current_time - t < 5]
+                    
+                    #Alert if more than 20 non-IP broadcasts in 5 seconds, and avoid spam with 10 second cooldown
+                    if len(recent_broadcasts) > 20 and (current_time - state.last_broadcast_alert) > 10:
                         state.layer_counts["Layer 2 (Data Link)"] += 1 
-                        state.anomaly_log.appendleft(
-                        {"Time": time.strftime("%H:%M:%S"), "Layer": "L2", "Issue": f"Excessive Broadcast Traffic"}
-                    )
-            except Exception:
-                pass
+                        state.error_log.appendleft(
+                            {"Time": time.strftime("%H:%M:%S"), "Layer": "L2", "Issue": f"Excessive Broadcast Traffic ({len(recent_broadcasts)} packets in 5s)"}
+                        )
+                        state.last_broadcast_alert = current_time
+        except Exception:
+            pass
 
         #Layer 3: Networt
         if packet.haslayer(ICMP):
